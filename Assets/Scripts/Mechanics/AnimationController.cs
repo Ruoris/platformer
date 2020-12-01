@@ -39,25 +39,16 @@ namespace Platformer.Mechanics
         SpriteRenderer spriteRenderer;
         public Animator animator;
         // kopioitu kinematiObjectista alku
-        /// <summary>
-        /// The minimum normal (dot product) considered suitable for the entity sit on.
-        /// </summary>
+
         public float minGroundNormalY = .65f;
 
-        /// <summary>
-        /// A custom gravity coefficient applied to this entity.
-        /// </summary>
+
         public float gravityModifier = 1f;
 
-        /// <summary>
-        /// The current velocity of the entity.
-        /// </summary>
+
         public Vector2 velocity;
 
-        /// <summary>
-        /// Is the entity currently sitting on a surface?
-        /// </summary>
-        /// <value></value>
+
         public bool IsGrounded { get; private set; }
 
         protected Vector2 targetVelocity;
@@ -68,20 +59,121 @@ namespace Platformer.Mechanics
 
         protected const float minMoveDistance = 0.001f;
         protected const float shellRadius = 0.01f;
-        /// A global jump modifier applied to all initial jump velocities.
-        /// </summary>
+
         public float jumpModifier = 1.5f;
 
-        /// <summary>
-        /// A global jump modifier applied to slow down an active jump when 
-        /// the user releases the jump input.
-        /// </summary>
+
+
         public float jumpDeceleration = 0.5f;
         // kopioitu kinematiObjectista loppu
-        protected virtual void Awake()
+        void Awake()
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
             animator = GetComponent<Animator>();
+        }
+        public void Bounce(Vector2 dir)
+        {
+            velocity.y = dir.y;
+            velocity.x = dir.x;
+        }
+
+
+        void OnEnable()
+        {
+            body = GetComponent<Rigidbody2D>();
+            body.isKinematic = true;
+        }
+
+        //void OnDisable()
+        //{
+        //    body.isKinematic = false;
+        //}
+
+        void Start()
+        {
+            contactFilter.useTriggers = false;
+            contactFilter.SetLayerMask(Physics2D.GetLayerCollisionMask(gameObject.layer));
+            contactFilter.useLayerMask = true;
+        }
+
+        void Update()
+        {
+            targetVelocity = Vector2.zero;
+            ComputeVelocity();
+        }
+
+
+        void FixedUpdate()
+        {
+            //if already falling, fall faster than the jump speed, otherwise use normal gravity.
+            if (velocity.y < 0)
+                velocity += gravityModifier * Physics2D.gravity * Time.deltaTime;
+            else
+                velocity += Physics2D.gravity * Time.deltaTime;
+
+            velocity.x = targetVelocity.x;
+
+            IsGrounded = false;
+
+            var deltaPosition = velocity * Time.deltaTime;
+
+            var moveAlongGround = new Vector2(groundNormal.y, -groundNormal.x);
+
+            var move = moveAlongGround * deltaPosition.x;
+
+            PerformMovement(move, false);
+
+            move = Vector2.up * deltaPosition.y;
+
+            PerformMovement(move, true);
+
+        }
+
+        void PerformMovement(Vector2 move, bool yMovement)
+        {
+            var distance = move.magnitude;
+
+            if (distance > minMoveDistance)
+            {
+                //check if we hit anything in current direction of travel
+                var count = body.Cast(move, contactFilter, hitBuffer, distance + shellRadius);
+                for (var i = 0; i < count; i++)
+                {
+                    var currentNormal = hitBuffer[i].normal;
+
+                    //is this surface flat enough to land on?
+                    if (currentNormal.y > minGroundNormalY)
+                    {
+                        IsGrounded = true;
+                        // if moving up, change the groundNormal to new surface normal.
+                        if (yMovement)
+                        {
+                            groundNormal = currentNormal;
+                            currentNormal.x = 0;
+                        }
+                    }
+                    if (IsGrounded)
+                    {
+                        //how much of our velocity aligns with surface normal?
+                        var projection = Vector2.Dot(velocity, currentNormal);
+                        if (projection < 0)
+                        {
+                            //slower velocity if moving against the normal (up a hill).
+                            velocity = velocity - projection * currentNormal;
+                        }
+                    }
+                    else
+                    {
+                        //We are airborne, but hit something, so cancel vertical up and horizontal velocity.
+                        velocity.x *= 0;
+                        velocity.y = Mathf.Min(velocity.y, 0);
+                    }
+                    //remove shellDistance from actual move distance.
+                    var modifiedDistance = hitBuffer[i].distance - shellRadius;
+                    distance = modifiedDistance < distance ? modifiedDistance : distance;
+                }
+            }
+            body.position = body.position + move.normalized * distance;
         }
 
         void ComputeVelocity()
